@@ -13,7 +13,20 @@ Audio crosses the Go↔Liquidsoap boundary as streaming WAV over Unix sockets. L
 go get github.com/fremen-fi/liq-whip-whep/audio
 ```
 
-You need a [libopus](https://opus-codec.org/) shared library available at build time (`gopkg.in/hraban/opus.v2` links against it via cgo).
+You need libopus *and* libopusfile available at build time (`gopkg.in/hraban/opus.v2` pkg-configs both via cgo even when only the encoder/decoder are used):
+
+```sh
+# Debian/Ubuntu
+sudo apt-get install libopus-dev libopusfile-dev pkg-config
+# Fedora
+sudo dnf install opus-devel opusfile-devel pkgconf-pkg-config
+# Alpine
+sudo apk add opus-dev opusfile-dev pkgconf
+# Arch
+sudo pacman -S opus opusfile pkgconf
+# macOS
+brew install opus opusfile pkg-config
+```
 
 ## Use
 
@@ -72,4 +85,4 @@ See [`examples/basic/`](examples/basic) for a complete runnable example.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

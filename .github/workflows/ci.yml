@@ -16,7 +16,7 @@ jobs:
           go-version: '1.26'
           cache: true
       - name: Install libopus
-        run: sudo apt-get update && sudo apt-get install -y libopus-dev
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libopusfile-dev
       - name: go vet
         run: go vet ./...
       - name: gofmt
@@ -48,10 +48,10 @@ jobs:
           cache: true
       - name: Install libopus (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libopus-dev
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libopusfile-dev
       - name: Install libopus (macOS)
         if: runner.os == 'macOS'
-        run: brew install opus pkg-config
+        run: brew install opus opusfile pkg-config
       - name: Build
         run: go build ./...
       - name: Test
@@ -66,19 +66,19 @@ jobs:
         distro:
           - name: debian-bookworm
             image: golang:1.26-bookworm
-            setup: 'apt-get update && apt-get install -y libopus-dev pkg-config'
+            setup: 'apt-get update && apt-get install -y libopus-dev libopusfile-dev pkg-config'
           - name: alpine
             image: golang:1.26-alpine
-            setup: 'apk add --no-cache opus-dev pkgconf gcc musl-dev git'
+            setup: 'apk add --no-cache opus-dev opusfile-dev pkgconf gcc musl-dev git'
           - name: ubuntu-2404
             image: ubuntu:24.04
-            setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev pkg-config gcc git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+            setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev libopusfile-dev pkg-config gcc git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: fedora-latest
             image: fedora:latest
-            setup: 'dnf install -y opus-devel pkgconf-pkg-config gcc curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+            setup: 'dnf install -y opus-devel opusfile-devel pkgconf-pkg-config gcc curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: archlinux
             image: archlinux:latest
-            setup: 'pacman -Sy --noconfirm opus pkgconf gcc go git'
+            setup: 'pacman -Sy --noconfirm opus opusfile pkgconf gcc go git'
     container:
       image: ${{ matrix.distro.image }}
     steps:
@@ -105,7 +105,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-opus mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
+          install: mingw-w64-x86_64-opus mingw-w64-x86_64-opusfile mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
       - name: Build
         shell: msys2 {0}
         env:
