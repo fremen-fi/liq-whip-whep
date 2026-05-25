@@ -72,10 +72,10 @@ jobs:
             setup: 'apk add --no-cache opus-dev opusfile-dev pkgconf gcc musl-dev git'
           - name: ubuntu-2404
             image: ubuntu:24.04
-            setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev libopusfile-dev pkg-config gcc git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+            setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev libopusfile-dev pkg-config build-essential git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: fedora-latest
             image: fedora:latest
-            setup: 'dnf install -y opus-devel opusfile-devel pkgconf-pkg-config gcc curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+            setup: 'dnf install -y opus-devel opusfile-devel pkgconf-pkg-config gcc glibc-devel curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: archlinux
             image: archlinux:latest
             setup: 'pacman -Sy --noconfirm opus opusfile pkgconf gcc go git'
@@ -98,23 +98,25 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: true
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-opus mingw-w64-x86_64-opusfile mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
+          install: >-
+            mingw-w64-x86_64-go
+            mingw-w64-x86_64-opus
+            mingw-w64-x86_64-opusfile
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gcc
       - name: Build
         shell: msys2 {0}
         env:
           CGO_ENABLED: '1'
-          PKG_CONFIG_PATH: /mingw64/lib/pkgconfig
         run: |
           export PATH="/mingw64/bin:$PATH"
-          go build ./...
-          go build ./examples/...
+          export PKG_CONFIG_PATH=/mingw64/lib/pkgconfig
+          go version
+          go build -buildvcs=false ./...
+          go build -buildvcs=false ./examples/...
 
   readme-check:
     name: README sanity

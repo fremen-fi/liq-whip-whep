@@ -32,10 +32,9 @@ type Format struct {
 // WAVReader streams interleaved int16 samples from a WAV input. It blocks
 // on the underlying reader, so callers should put it in its own goroutine.
 type WAVReader struct {
-	r      io.Reader
-	fmt    Format
-	buf    []byte // staging for one chunk read
-	sample [4]byte
+	r   io.Reader
+	fmt Format
+	buf []byte // staging for one chunk read
 }
 
 // NewWAVReader parses the RIFF/WAVE header and stops when it has the data
