@@ -24,10 +24,10 @@ import (
 
 func main() {
 	var (
-		listen     = flag.String("listen", ":8080", "HTTP listen address")
-		micSock    = flag.String("mic-sock", "/tmp/liq-whip/mic.pcm", "Unix socket where Liquidsoap reads mic PCM from")
-		onAirSock  = flag.String("onair-sock", "/tmp/liq-whip/onair.pcm", "Unix socket where Liquidsoap writes on-air PCM to")
-		origins    = flag.String("allow-origin", "*", "CORS allowed origin (\"*\" for any, comma-separated for many)")
+		listen    = flag.String("listen", ":8080", "HTTP listen address")
+		micSock   = flag.String("mic-sock", "/tmp/liq-whip/mic.pcm", "Unix socket where Liquidsoap reads mic PCM from")
+		onAirSock = flag.String("onair-sock", "/tmp/liq-whip/onair.pcm", "Unix socket where Liquidsoap writes on-air PCM to")
+		origins   = flag.String("allow-origin", "*", "CORS allowed origin (\"*\" for any, comma-separated for many)")
 	)
 	flag.Parse()
 
