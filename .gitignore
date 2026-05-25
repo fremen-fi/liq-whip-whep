@@ -1,0 +1,25 @@
+# Build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.test
+*.out
+*.prof
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Editor / OS
+.idea/
+.vscode/
+.nova/
+.DS_Store
+
+# Stray binaries from `go build` at repo root
+/basic
+
+# Local env
+.env
+.env.local

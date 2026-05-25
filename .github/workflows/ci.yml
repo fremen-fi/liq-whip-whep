@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Install libopus
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Install libopus (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev
+      - name: Install libopus (macOS)
+        if: runner.os == 'macOS'
+        run: brew install opus pkg-config
+      - name: Build
+        run: go build ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  distro-build:
+    name: Build (${{ matrix.distro.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - name: debian-bookworm
+            image: golang:1.26-bookworm
+            setup: 'apt-get update && apt-get install -y libopus-dev pkg-config'
+          - name: alpine
+            image: golang:1.26-alpine
+            setup: 'apk add --no-cache opus-dev pkgconf gcc musl-dev git'
+          - name: ubuntu-2404
+            image: ubuntu:24.04
+            setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev pkg-config gcc git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+          - name: fedora-latest
+            image: fedora:latest
+            setup: 'dnf install -y opus-devel pkgconf-pkg-config gcc curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
+          - name: archlinux
+            image: archlinux:latest
+            setup: 'pacman -Sy --noconfirm opus pkgconf gcc go git'
+    container:
+      image: ${{ matrix.distro.image }}
+    steps:
+      - name: Install distro deps
+        shell: sh
+        run: ${{ matrix.distro.setup }}
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          go version
+          go build ./...
+          go build ./examples/...
+
+  windows-build:
+    name: Build (windows-latest)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-opus mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
+      - name: Build
+        shell: msys2 {0}
+        env:
+          CGO_ENABLED: '1'
+          PKG_CONFIG_PATH: /mingw64/lib/pkgconfig
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          go build ./...
+          go build ./examples/...
+
+  readme-check:
+    name: README sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: README + LICENSE exist and reference the package
+        run: |
+          test -f README.md
+          test -f LICENSE
+          grep -q "liq-whip-whep" README.md
+          grep -q "WHIP" README.md
+          grep -q "WHEP" README.md
+          grep -q "Liquidsoap" README.md
