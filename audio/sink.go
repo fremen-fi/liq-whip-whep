@@ -25,23 +25,19 @@ const (
 	uplinkBits     = 16
 )
 
-// Playout pacing. WHIP delivers Opus frames at the network's (bursty,
-// jittery) arrival cadence, but Liquidsoap consumes the mic socket at a
-// rock-steady 48 kHz. If we wrote straight through, the reader's input
-// buffer would underrun between bursts — emitting track marks, flipping to
-// blank, replaying buffered chunks ("frames from here and there") and
-// leaking sources. So we decouple: WHIP fills a ring, and a wall-clock
-// ticker drains exactly one frame per interval, padding with silence on
-// underrun. The result is a continuous real-time stream regardless of how
-// lumpy the network delivery is.
+// Playout. WHIP frames arrive bursty; Liquidsoap reads the mic socket at a
+// rock-steady 48 kHz. We decouple via a ring, and the writer feeds the Unix
+// socket with blocking writes — the socket's send buffer is capped so the
+// kernel back-pressures us to Liquidsoap's read rate. The wire pace tracks
+// the receiver exactly instead of running on an independent wall-clock
+// ticker that drifts and can skip ticks under GC pauses.
 const (
-	paceMillis         = 20
-	frameSamples       = uplinkRate * paceMillis / 1000 // 960 @ 48k/20ms
-	prebufferSamples   = frameSamples * 3               // ~60 ms primed before real audio
-	maxBufferedSamples = uplinkRate / 2                 // ~500 ms latency cap
+	frameSamples       = uplinkRate / 50 // 960 = ~20 ms — per-write chunk
+	maxBufferedSamples = uplinkRate / 2  // ~500 ms cap on WHIP ring backlog
+	// SO_SNDBUF on the consumer socket. 192 KB/s × ~80 ms ≈ 15 KB; Linux
+	// clamps to its own minimum if smaller, but caps bridge→liq latency.
+	sendBufferBytes = 16 * 1024
 )
-
-var paceInterval = paceMillis * time.Millisecond
 
 // PCMSink accepts decoded mic PCM from a WHIP session and forwards it as
 // raw interleaved s16le to a single Liquidsoap consumer connected over a
@@ -59,7 +55,6 @@ type PCMSink struct {
 	mu       sync.Mutex
 	consumer net.Conn // current Liquidsoap reader; nil if none
 	ring     []int16  // pending mic samples awaiting paced emission
-	primed   bool     // true once the ring first reached prebufferSamples
 
 	// TapPath, if set before Start, makes the pacer also write the exact
 	// stream it emits to Liquidsoap into this WAV file — a non-invasive
@@ -140,10 +135,13 @@ func (s *PCMSink) acceptLoop(ctx context.Context, ln net.Listener) {
 			continue
 		}
 		slog.Info("pcm sink: liquidsoap connected", "socket", s.socketPath)
-		// Fresh connection starts from a clean, re-primed buffer.
+		// Cap the kernel send buffer so bridge → liquidsoap latency is
+		// bounded by the OS, not by how far the writer can run ahead.
+		if uc, ok := conn.(*net.UnixConn); ok {
+			_ = uc.SetWriteBuffer(sendBufferBytes)
+		}
 		s.mu.Lock()
 		s.ring = s.ring[:0]
-		s.primed = false
 		s.mu.Unlock()
 		s.swapConsumer(conn)
 
@@ -167,18 +165,16 @@ func (s *PCMSink) swapConsumer(c net.Conn) {
 	}
 }
 
-// paceLoop emits one frame every paceInterval to the connected consumer,
-// draining the ring and padding with silence when it runs dry. This is the
-// single place that writes audio to the socket, so the stream Liquidsoap
-// sees is continuous at exactly 48 kHz on average.
+// paceLoop drains the ring (padding with silence on underrun) into the
+// connected consumer via blocking writes. The socket's capped send buffer
+// back-pressures us to Liquidsoap's read rate, so the wire pace tracks the
+// receiver exactly — no independent wall-clock ticker, no drift, no
+// skipped ticks under GC.
 func (s *PCMSink) paceLoop(ctx context.Context) {
-	ticker := time.NewTicker(paceInterval)
-	defer ticker.Stop()
-	// Ring holds mono; we interleave L=R into `frame` on each tick.
 	mono := make([]int16, frameSamples)
 	frame := make([]int16, frameSamples*uplinkChannels)
 
-	// Optional debug tap: write the exact emitted stream to a WAV file.
+	// Optional debug tap: WAV-framed mirror of the wire stream.
 	if s.TapPath != "" {
 		if f, err := os.Create(s.TapPath); err == nil {
 			if err := pcm.WriteStreamingWAVHeader(f, pcm.Format{
@@ -204,36 +200,24 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 			return
 		case <-s.stop:
 			return
-		case <-ticker.C:
+		default:
 		}
 
 		s.mu.Lock()
 		c := s.consumer
 		if c == nil {
-			// No reader: drop the backlog so a reconnect starts clean
-			// rather than replaying stale audio.
+			// No reader: drop the backlog so a reconnect starts clean,
+			// then idle briefly before re-checking.
 			s.ring = s.ring[:0]
-			s.primed = false
 			s.mu.Unlock()
-			continue
-		}
-		if !s.primed {
-			if len(s.ring) < prebufferSamples {
-				// Still filling the playout buffer — emit silence to hold
-				// the stream at real-time until we have headroom.
-				for i := range frame {
-					frame[i] = 0
-				}
-				s.mu.Unlock()
-				if err := pcm.WriteInt16LE(c, frame); err != nil {
-					s.swapConsumer(nil)
-				}
-				if s.tap != nil {
-					_ = pcm.WriteInt16LE(s.tap, frame)
-				}
-				continue
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-s.stop:
+				return
+			case <-ctx.Done():
+				return
 			}
-			s.primed = true
+			continue
 		}
 		n := copy(mono, s.ring)
 		// Compact the remainder to the front (overlap-safe) so the backing
@@ -252,6 +236,7 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 
 		if err := pcm.WriteInt16LE(c, frame); err != nil {
 			s.swapConsumer(nil)
+			continue
 		}
 		if s.tap != nil {
 			_ = pcm.WriteInt16LE(s.tap, frame)
