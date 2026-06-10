@@ -36,6 +36,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
+    needs: [lint, readme-check]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,6 +61,7 @@ jobs:
 
   distro-build:
     name: Build (${{ matrix.distro.name }})
+    needs: [test]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -75,7 +77,7 @@ jobs:
             image: ubuntu:24.04
             setup: 'apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libopus-dev libopusfile-dev pkg-config build-essential git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: fedora-latest
-            image: fedora:latest
+            image: registry.fedoraproject.org/fedora:latest
             setup: 'dnf install -y opus-devel opusfile-devel pkgconf-pkg-config gcc glibc-devel curl git tar && curl -sSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go'
           - name: archlinux
             image: archlinux:latest
@@ -95,6 +97,7 @@ jobs:
 
   windows-build:
     name: Build (windows-latest)
+    needs: [test]
     runs-on: windows-latest
     continue-on-error: true
     steps:
