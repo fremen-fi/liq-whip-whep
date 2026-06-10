@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -129,11 +130,38 @@ func newPeerConnection() (*webrtc.PeerConnection, error) {
 		return nil, err
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(me))
-	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: []webrtc.ICEServer{}})
+	// STUN gives the server an srflx candidate. With the host interface on a
+	// private address behind 1:1 NAT, host candidates alone are unreachable
+	// from the internet and ICE can never complete (LAN keeps working).
+	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: []webrtc.ICEServer{
+		{URLs: []string{"stun:stun.cloudflare.com:3478"}},
+	}})
 	if err != nil {
 		return nil, err
 	}
 	return pc, nil
+}
+
+// logICE wires ICE-level diagnostics for one session: every remote candidate
+// from the offer, every local candidate as it is gathered, and ICE state
+// transitions — one failed attempt in the journal then shows which addresses
+// each side advertised and whether any connectivity check landed.
+func logICE(pc *webrtc.PeerConnection, kind, sessionID, offerSDP string) {
+	for _, l := range strings.Split(offerSDP, "\n") {
+		l = strings.TrimRight(l, "\r")
+		if strings.HasPrefix(l, "a=candidate:") {
+			slog.Info(kind+": remote candidate", "session", sessionID,
+				"candidate", strings.TrimPrefix(l, "a=candidate:"))
+		}
+	}
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c != nil {
+			slog.Info(kind+": local candidate", "session", sessionID, "candidate", c.String())
+		}
+	})
+	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		slog.Info(kind+": ice state", "session", sessionID, "state", s.String())
+	})
 }
 
 // answerOffer applies the offer SDP, generates an answer, sets it as local

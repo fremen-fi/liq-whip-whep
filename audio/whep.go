@@ -24,6 +24,7 @@ func (s *Server) startWHEPSession(sess *Session, offerSDP string) (string, error
 		return "", err
 	}
 	sess.pc = pc
+	logICE(pc, "whep", sess.ID, offerSDP)
 
 	// Stereo Opus is fine even when the upstream is mono — libopus will
 	// duplicate the single channel internally. Choosing stereo at SDP

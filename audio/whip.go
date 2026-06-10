@@ -25,6 +25,7 @@ func (s *Server) startWHIPSession(sess *Session, offerSDP string) (string, error
 		return "", err
 	}
 	sess.pc = pc
+	logICE(pc, "whip", sess.ID, offerSDP)
 
 	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
 		Direction: webrtc.RTPTransceiverDirectionRecvonly,
