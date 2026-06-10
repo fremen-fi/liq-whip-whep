@@ -25,17 +25,23 @@ const (
 	uplinkBits     = 16
 )
 
-// Playout. WHIP frames arrive bursty; Liquidsoap reads the mic socket at a
-// rock-steady 48 kHz. We decouple via a ring, and the writer feeds the Unix
-// socket with blocking writes — the socket's send buffer is capped so the
-// kernel back-pressures us to Liquidsoap's read rate. The wire pace tracks
-// the receiver exactly instead of running on an independent wall-clock
-// ticker that drifts and can skip ticks under GC pauses.
+// Playout. WHIP frames arrive bursty; Liquidsoap gives us NO back-pressure
+// to real-time — input.external's feeding thread reads the socket as fast
+// as we write and silently DROPS its buffer past `max=`, so blocking writes
+// free-run at CPU speed and dilute the mic into a silence torrent. The
+// bridge must self-pace: a deadline schedule (anchor + frames-sent × 20 ms)
+// emits exactly 48 kHz long-term, and a late frame is written immediately
+// to catch up instead of being skipped like a missed ticker tick.
 const (
 	frameSamples       = uplinkRate / 50 // 960 = ~20 ms — per-write chunk
 	maxBufferedSamples = uplinkRate / 2  // ~500 ms cap on WHIP ring backlog
-	// SO_SNDBUF on the consumer socket. 192 KB/s × ~80 ms ≈ 15 KB; Linux
-	// clamps to its own minimum if smaller, but caps bridge→liq latency.
+	// Exactly 20 ms (960/48000); deadline math accumulates zero rounding.
+	frameDuration = time.Duration(frameSamples) * time.Second / uplinkRate
+	// Behind schedule beyond this, re-anchor instead of bursting catch-up
+	// frames Liquidsoap would drop on overrun anyway.
+	maxLag = 500 * time.Millisecond
+	// SO_SNDBUF on the consumer socket — bounds how deep a catch-up burst
+	// can run into the kernel before the writer blocks.
 	sendBufferBytes = 16 * 1024
 )
 
@@ -166,13 +172,15 @@ func (s *PCMSink) swapConsumer(c net.Conn) {
 }
 
 // paceLoop drains the ring (padding with silence on underrun) into the
-// connected consumer via blocking writes. The socket's capped send buffer
-// back-pressures us to Liquidsoap's read rate, so the wire pace tracks the
-// receiver exactly — no independent wall-clock ticker, no drift, no
-// skipped ticks under GC.
+// connected consumer, one frame per deadline. Unlike a ticker, a deadline
+// schedule never skips: frames late after a stall are written back-to-back
+// until the schedule is caught up, so the long-term wire rate is exactly
+// 48 kHz on the bridge's clock.
 func (s *PCMSink) paceLoop(ctx context.Context) {
 	mono := make([]int16, frameSamples)
 	frame := make([]int16, frameSamples*uplinkChannels)
+	var anchor time.Time // zero = re-anchor before the next emission
+	var sent int64       // frames emitted since anchor
 
 	// Optional debug tap: WAV-framed mirror of the wire stream.
 	if s.TapPath != "" {
@@ -203,6 +211,21 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 		default:
 		}
 
+		if !anchor.IsZero() {
+			next := anchor.Add(time.Duration(sent) * frameDuration)
+			if d := time.Until(next); d > 0 {
+				select {
+				case <-time.After(d):
+				case <-s.stop:
+					return
+				case <-ctx.Done():
+					return
+				}
+			} else if -d > maxLag {
+				anchor, sent = time.Now(), 0
+			}
+		}
+
 		s.mu.Lock()
 		c := s.consumer
 		if c == nil {
@@ -210,6 +233,7 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 			// then idle briefly before re-checking.
 			s.ring = s.ring[:0]
 			s.mu.Unlock()
+			anchor = time.Time{}
 			select {
 			case <-time.After(50 * time.Millisecond):
 			case <-s.stop:
@@ -228,6 +252,9 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 			mono[i] = 0 // silence pad on underrun
 		}
 		s.mu.Unlock()
+		if anchor.IsZero() {
+			anchor, sent = time.Now(), 0
+		}
 		// Interleave mono → L=R stereo.
 		for i := 0; i < frameSamples; i++ {
 			frame[2*i] = mono[i]
@@ -236,11 +263,13 @@ func (s *PCMSink) paceLoop(ctx context.Context) {
 
 		if err := pcm.WriteInt16LE(c, frame); err != nil {
 			s.swapConsumer(nil)
+			anchor = time.Time{}
 			continue
 		}
 		if s.tap != nil {
 			_ = pcm.WriteInt16LE(s.tap, frame)
 		}
+		sent++
 	}
 }
 
